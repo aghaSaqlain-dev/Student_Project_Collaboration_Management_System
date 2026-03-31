@@ -1,5 +1,18 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { adminCreateUser, adminDeleteUser, adminUpdateUser, fetchBootstrap, fetchUsers, login, register } from "./api";
+import {
+    adminCreateUser,
+    adminDeleteUser,
+    adminUpdateUser,
+    fetchBootstrap,
+    fetchGroups,
+    fetchUsers,
+    leaderApproveJoinRequest,
+    leaderRejectJoinRequest,
+    login,
+    register,
+    requestJoinGroup,
+    supervisorApproveGroup,
+} from "./api";
 import type { Group, Role, Task, User } from "./types";
 
 interface AppContextType {
@@ -259,6 +272,21 @@ function GroupsPage() {
     const [tab, setTab] = useState("all");
     const [showCreate, setShowCreate] = useState(false);
     const [newGroup, setNewGroup] = useState({ name: "", description: "", tags: "", maxSize: 4 });
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        const loadGroups = async () => {
+            try {
+                const latestGroups = await fetchGroups(search);
+                setGroups(latestGroups);
+            } catch (e) {
+                setError(e instanceof Error ? e.message : "Failed to load groups.");
+            }
+        };
+
+        void loadGroups();
+    }, [search, setGroups]);
 
     const filtered = groups.filter(g => {
         const matchSearch = g.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -272,24 +300,60 @@ function GroupsPage() {
 
     const getUserName = (id: number) => users.find(u => u.id === id)?.name || "Unknown";
 
-    const handleJoin = (gid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid ? { ...g, pendingRequests: [...(g.pendingRequests || []), user.id] } : g));
+    const replaceGroup = (updatedGroup: Group) => {
+        setGroups((current) => current.map((group) => (group.id === updatedGroup.id ? updatedGroup : group)));
     };
 
-    const handleApproveRequest = (gid: number, uid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid
-            ? { ...g, members: [...g.members, uid], pendingRequests: g.pendingRequests.filter(r => r !== uid) }
-            : g));
+    const handleJoin = async (gid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await requestJoinGroup(user.id, gid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to request group join.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleRejectRequest = (gid: number, uid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid
-            ? { ...g, pendingRequests: g.pendingRequests.filter(r => r !== uid) }
-            : g));
+    const handleApproveRequest = async (gid: number, uid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await leaderApproveJoinRequest(user.id, gid, uid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to approve join request.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleApproveGroup = (gid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid ? { ...g, status: "active" } : g));
+    const handleRejectRequest = async (gid: number, uid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await leaderRejectJoinRequest(user.id, gid, uid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to reject join request.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleApproveGroup = async (gid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await supervisorApproveGroup(user.id, gid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to approve team.");
+        } finally {
+            setBusy(false);
+        }
     };
 
     const handleCreateGroup = () => {
@@ -337,6 +401,8 @@ function GroupsPage() {
                 <input className="search-input" placeholder="Search groups by name or tech..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
 
+            {error && <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>}
+
             <div className="card-grid card-grid-2">
                 {filtered.map(g => {
                     const isMember = g.members.includes(user.id) || g.leaderId === user.id;
@@ -376,7 +442,7 @@ function GroupsPage() {
                                             <span style={{ fontSize: 12 }}>{getUserName(rid)}</span>
                                             <div className="flex gap-8">
                                                 <button className="btn btn-success btn-sm" onClick={() => handleApproveRequest(g.id, rid)}><Icon name="check" size={11} /></button>
-                                                <button className="btn btn-danger btn-sm" onClick={() => handleRejectRequest(g.id, rid)}><Icon name="x" size={11} /></button>
+                                                <button className="btn btn-danger btn-sm" onClick={() => void handleRejectRequest(g.id, rid)}><Icon name="x" size={11} /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -384,13 +450,13 @@ function GroupsPage() {
                             )}
 
                             {user.role === "supervisor" && g.status === "formed" && (
-                                <button className="btn btn-success w-full" style={{ justifyContent: "center" }} onClick={() => handleApproveGroup(g.id)}>
+                                <button className="btn btn-success w-full" style={{ justifyContent: "center" }} onClick={() => void handleApproveGroup(g.id)} disabled={busy}>
                                     <Icon name="check" size={13} /> Approve Group
                                 </button>
                             )}
 
                             {user.role === "student" && !isMember && !hasPending && g.status === "open" && !isFull && (
-                                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={() => handleJoin(g.id)}>
+                                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={() => void handleJoin(g.id)} disabled={busy}>
                                     Request to Join
                                 </button>
                             )}
@@ -411,6 +477,8 @@ function GroupsPage() {
             {filtered.length === 0 && (
                 <div className="empty">No groups found</div>
             )}
+
+            {busy && <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>Processing group request...</div>}
 
             {showCreate && (
                 <div className="modal-overlay">

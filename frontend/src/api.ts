@@ -1,11 +1,11 @@
-import type { BootstrapResponse, User } from "./types";
+import type { BootstrapResponse, Group, User } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_BASE}${path}`, {
-        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
         ...init,
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });
 
     if (!response.ok) {
@@ -91,4 +91,46 @@ export async function adminDeleteUser(adminUserId: number, userId: number): Prom
         method: "DELETE",
         headers: adminHeaders(adminUserId),
     });
+}
+
+export async function fetchGroups(search?: string): Promise<Group[]> {
+    const query = search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+    const result = await request<{ groups: Group[] }>(`/groups${query}`);
+    return result.groups;
+}
+
+export async function requestJoinGroup(studentId: number, groupId: number): Promise<Group> {
+    const result = await request<{ group: Group }>(`/groups/${groupId}/join-requests`, {
+        method: "POST",
+        headers: { "x-user-id": String(studentId) },
+    });
+
+    return result.group;
+}
+
+export async function leaderApproveJoinRequest(leaderId: number, groupId: number, userId: number): Promise<Group> {
+    const result = await request<{ group: Group }>(`/groups/${groupId}/requests/${userId}/approve`, {
+        method: "POST",
+        headers: { "x-user-id": String(leaderId) },
+    });
+
+    return result.group;
+}
+
+export async function leaderRejectJoinRequest(leaderId: number, groupId: number, userId: number): Promise<Group> {
+    const result = await request<{ group: Group }>(`/groups/${groupId}/requests/${userId}/reject`, {
+        method: "POST",
+        headers: { "x-user-id": String(leaderId) },
+    });
+
+    return result.group;
+}
+
+export async function supervisorApproveGroup(supervisorId: number, groupId: number): Promise<Group> {
+    const result = await request<{ group: Group }>(`/groups/${groupId}/approve`, {
+        method: "POST",
+        headers: { "x-user-id": String(supervisorId) },
+    });
+
+    return result.group;
 }

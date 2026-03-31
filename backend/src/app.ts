@@ -1,7 +1,7 @@
 import cors from "cors";
 import express from "express";
 import { groups, tasks, users, withoutPassword } from "./data.js";
-import type { PublicUser, Role, User } from "./types.js";
+import type { Group, PublicUser, Role, User } from "./types.js";
 
 const app = express();
 
@@ -60,6 +60,10 @@ function ensureAdmin(req: express.Request, res: express.Response): User | null {
     return actor;
 }
 
+function getGroupById(groupId: number): Group | null {
+    return groups.find((group) => group.id === groupId) ?? null;
+}
+
 app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
 });
@@ -70,6 +74,22 @@ app.get("/api/bootstrap", (_req, res) => {
         groups,
         tasks,
     });
+});
+
+app.get("/api/groups", (req, res) => {
+    const search = String(req.query.search ?? "").trim().toLowerCase();
+
+    const filtered = search
+        ? groups.filter((group) => {
+            return (
+                group.name.toLowerCase().includes(search) ||
+                group.description.toLowerCase().includes(search) ||
+                group.tags.some((tag) => tag.toLowerCase().includes(search))
+            );
+        })
+        : groups;
+
+    return res.json({ groups: filtered });
 });
 
 app.post("/api/auth/login", (req, res) => {
@@ -267,6 +287,151 @@ app.delete("/api/users/:id", (req, res) => {
 
     users.splice(index, 1);
     return res.status(204).send();
+});
+
+app.post("/api/groups/:id/join-requests", (req, res) => {
+    const actor = getAuthUser(req);
+    if (!actor) {
+        return res.status(401).json({ message: "Authentication required." });
+    }
+
+    if (actor.role !== "student") {
+        return res.status(403).json({ message: "Only students can request to join groups." });
+    }
+
+    const groupId = Number(req.params.id);
+    if (Number.isNaN(groupId)) {
+        return res.status(400).json({ message: "Invalid group id." });
+    }
+
+    const group = getGroupById(groupId);
+    if (!group) {
+        return res.status(404).json({ message: "Group not found." });
+    }
+
+    if (group.status !== "open") {
+        return res.status(400).json({ message: "This group is not accepting join requests." });
+    }
+
+    const alreadyMember = group.members.includes(actor.id) || group.leaderId === actor.id;
+    if (alreadyMember) {
+        return res.status(400).json({ message: "You are already a member of this group." });
+    }
+
+    if (group.pendingRequests.includes(actor.id)) {
+        return res.status(400).json({ message: "You already have a pending request for this group." });
+    }
+
+    if (group.members.length >= group.maxSize) {
+        return res.status(400).json({ message: "Group is full." });
+    }
+
+    group.pendingRequests.push(actor.id);
+    return res.json({ group });
+});
+
+app.post("/api/groups/:id/requests/:userId/approve", (req, res) => {
+    const actor = getAuthUser(req);
+    if (!actor) {
+        return res.status(401).json({ message: "Authentication required." });
+    }
+
+    const groupId = Number(req.params.id);
+    const requestedUserId = Number(req.params.userId);
+
+    if (Number.isNaN(groupId) || Number.isNaN(requestedUserId)) {
+        return res.status(400).json({ message: "Invalid id provided." });
+    }
+
+    const group = getGroupById(groupId);
+    if (!group) {
+        return res.status(404).json({ message: "Group not found." });
+    }
+
+    if (group.leaderId !== actor.id) {
+        return res.status(403).json({ message: "Only the team leader can approve join requests." });
+    }
+
+    if (!group.pendingRequests.includes(requestedUserId)) {
+        return res.status(404).json({ message: "Join request not found." });
+    }
+
+    if (group.members.length >= group.maxSize) {
+        return res.status(400).json({ message: "Group is full." });
+    }
+
+    group.pendingRequests = group.pendingRequests.filter((id) => id !== requestedUserId);
+    if (!group.members.includes(requestedUserId)) {
+        group.members.push(requestedUserId);
+    }
+
+    if (group.status === "open") {
+        group.status = "formed";
+    }
+
+    return res.json({ group });
+});
+
+app.post("/api/groups/:id/requests/:userId/reject", (req, res) => {
+    const actor = getAuthUser(req);
+    if (!actor) {
+        return res.status(401).json({ message: "Authentication required." });
+    }
+
+    const groupId = Number(req.params.id);
+    const requestedUserId = Number(req.params.userId);
+
+    if (Number.isNaN(groupId) || Number.isNaN(requestedUserId)) {
+        return res.status(400).json({ message: "Invalid id provided." });
+    }
+
+    const group = getGroupById(groupId);
+    if (!group) {
+        return res.status(404).json({ message: "Group not found." });
+    }
+
+    if (group.leaderId !== actor.id) {
+        return res.status(403).json({ message: "Only the team leader can reject join requests." });
+    }
+
+    if (!group.pendingRequests.includes(requestedUserId)) {
+        return res.status(404).json({ message: "Join request not found." });
+    }
+
+    group.pendingRequests = group.pendingRequests.filter((id) => id !== requestedUserId);
+    return res.json({ group });
+});
+
+app.post("/api/groups/:id/approve", (req, res) => {
+    const actor = getAuthUser(req);
+    if (!actor) {
+        return res.status(401).json({ message: "Authentication required." });
+    }
+
+    if (actor.role !== "supervisor") {
+        return res.status(403).json({ message: "Only supervisors can approve teams." });
+    }
+
+    const groupId = Number(req.params.id);
+    if (Number.isNaN(groupId)) {
+        return res.status(400).json({ message: "Invalid group id." });
+    }
+
+    const group = getGroupById(groupId);
+    if (!group) {
+        return res.status(404).json({ message: "Group not found." });
+    }
+
+    if (group.status !== "formed") {
+        return res.status(400).json({ message: "Only formed groups can be supervisor-approved." });
+    }
+
+    group.status = "active";
+    if (!group.supervisorId) {
+        group.supervisorId = actor.id;
+    }
+
+    return res.json({ group });
 });
 
 export default app;
