@@ -1,4 +1,4 @@
-import type { BootstrapResponse, Group, User } from "./types";
+import type { BootstrapResponse, Group, Task, User } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
@@ -133,4 +133,47 @@ export async function supervisorApproveGroup(supervisorId: number, groupId: numb
     });
 
     return result.group;
+}
+
+export async function completeGroup(actorId: number, groupId: number): Promise<Group> {
+    const result = await request<{ group: Group }>(`/groups/${groupId}/complete`, {
+        method: "POST",
+        headers: { "x-user-id": String(actorId) },
+    });
+
+    return result.group;
+}
+
+export async function createTask(
+    actorId: number,
+    payload: { title: string; description: string; groupId: number; assigneeId: number; priority: string; dueDate: string },
+): Promise<Task> {
+    const result = await request<{ task: Task }>("/tasks", {
+        method: "POST",
+        headers: { "x-user-id": String(actorId) },
+        body: JSON.stringify(payload),
+    });
+
+    return result.task;
+}
+
+export async function updateTask(
+    actorId: number,
+    taskId: number,
+    payload: { title?: string; description?: string; status?: string; priority?: string; dueDate?: string; assigneeId?: number },
+): Promise<Task> {
+    const result = await request<{ task: Task }>(`/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "x-user-id": String(actorId) },
+        body: JSON.stringify(payload),
+    });
+
+    return result.task;
+}
+
+export async function deleteTask(actorId: number, taskId: number): Promise<void> {
+    await request<unknown>(`/tasks/${taskId}`, {
+        method: "DELETE",
+        headers: { "x-user-id": String(actorId) },
+    });
 }

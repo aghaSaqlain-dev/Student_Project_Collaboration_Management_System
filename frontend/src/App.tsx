@@ -3,6 +3,9 @@ import {
     adminCreateUser,
     adminDeleteUser,
     adminUpdateUser,
+    completeGroup,
+    createTask,
+    deleteTask,
     fetchBootstrap,
     fetchGroups,
     fetchUsers,
@@ -12,6 +15,7 @@ import {
     register,
     requestJoinGroup,
     supervisorApproveGroup,
+    updateTask,
 } from "./api";
 import type { Group, Role, Task, User } from "./types";
 
@@ -356,6 +360,19 @@ function GroupsPage() {
         }
     };
 
+    const handleCompleteGroup = async (gid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await completeGroup(user.id, gid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to mark group as completed.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const handleCreateGroup = () => {
         if (!newGroup.name.trim()) return;
         const g: Group = {
@@ -455,6 +472,18 @@ function GroupsPage() {
                                 </button>
                             )}
 
+                            {g.status === "active" && (user.role === "supervisor" || g.leaderId === user.id) && (
+                                <button className="btn btn-ghost w-full" style={{ justifyContent: "center", marginTop: 6, borderColor: "rgba(0,229,160,0.3)", color: "var(--accent3)" }} onClick={() => void handleCompleteGroup(g.id)} disabled={busy}>
+                                    <Icon name="check" size={13} /> Mark as Completed
+                                </button>
+                            )}
+
+                            {g.status === "completed" && (
+                                <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0", borderTop: "1px solid var(--border)", marginTop: 8 }}>
+                                    ✅ Project completed — no further changes allowed
+                                </div>
+                            )}
+
                             {user.role === "student" && !isMember && !hasPending && g.status === "open" && !isFull && (
                                 <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={() => void handleJoin(g.id)} disabled={busy}>
                                     Request to Join
@@ -463,11 +492,16 @@ function GroupsPage() {
                             {user.role === "student" && hasPending && (
                                 <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>Request pending...</div>
                             )}
-                            {user.role === "student" && isMember && (
+                            {user.role === "student" && isMember && g.status !== "completed" && (
                                 <div style={{ textAlign: "center", fontSize: 12, color: "var(--accent3)", padding: "8px 0" }}>You are a member</div>
                             )}
-                            {isFull && !isMember && (
+                            {isFull && !isMember && g.status === "open" && (
                                 <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>Group is full</div>
+                            )}
+                            {!isMember && !hasPending && g.status !== "open" && g.status !== "completed" && user.role === "student" && (
+                                <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>
+                                    🔒 {g.status === "formed" ? "Awaiting supervisor approval" : "Group is active"}
+                                </div>
                             )}
                         </div>
                     );
@@ -518,6 +552,8 @@ function TasksPage() {
     const [filterGroup, setFilterGroup] = useState("all");
     const [newTask, setNewTask] = useState({ title: "", description: "", assigneeId: "", groupId: "", priority: "medium", dueDate: "" });
     const [editTask, setEditTask] = useState<Task | null>(null);
+    const [taskBusy, setTaskBusy] = useState(false);
+    const [taskError, setTaskError] = useState("");
 
     const myGroupIds = groups.filter(g => g.members.includes(user.id) || g.leaderId === user.id).map(g => g.id);
     const visibleGroupIds = user.role === "student" ? myGroupIds : groups.map(g => g.id);
@@ -531,37 +567,73 @@ function TasksPage() {
         return g?.leaderId === user.id;
     };
 
-    const handleCreateTask = () => {
+    const handleCreateTask = async () => {
         if (!newTask.title || !newTask.groupId) return;
-        const assignee = parseInt(newTask.assigneeId, 10);
-        const t: Task = {
-            id: Date.now(),
-            title: newTask.title,
-            description: newTask.description,
-            assigneeId: Number.isNaN(assignee) ? user.id : assignee,
-            groupId: parseInt(newTask.groupId, 10),
-            status: "todo",
-            priority: newTask.priority as Task["priority"],
-            createdBy: user.id,
-            dueDate: newTask.dueDate,
-        };
-        setTasks(ts => [...ts, t]);
-        setShowCreate(false);
-        setNewTask({ title: "", description: "", assigneeId: "", groupId: "", priority: "medium", dueDate: "" });
+        setTaskBusy(true);
+        setTaskError("");
+        try {
+            const assignee = parseInt(newTask.assigneeId, 10);
+            const created = await createTask(user.id, {
+                title: newTask.title,
+                description: newTask.description,
+                groupId: parseInt(newTask.groupId, 10),
+                assigneeId: Number.isNaN(assignee) ? user.id : assignee,
+                priority: newTask.priority,
+                dueDate: newTask.dueDate,
+            });
+            setTasks(ts => [...ts, created]);
+            setShowCreate(false);
+            setNewTask({ title: "", description: "", assigneeId: "", groupId: "", priority: "medium", dueDate: "" });
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to create task.");
+        } finally {
+            setTaskBusy(false);
+        }
     };
 
-    const handleStatusChange = (tid: number, status: Task["status"]) => {
-        setTasks(ts => ts.map(t => t.id === tid ? { ...t, status } : t));
+    const handleStatusChange = async (tid: number, status: Task["status"]) => {
+        setTaskError("");
+        try {
+            const updated = await updateTask(user.id, tid, { status });
+            setTasks(ts => ts.map(t => t.id === tid ? updated : t));
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to update task status.");
+        }
     };
 
-    const handleDeleteTask = (tid: number) => {
-        setTasks(ts => ts.filter(t => t.id !== tid));
+    const handleDeleteTask = async (tid: number) => {
+        setTaskBusy(true);
+        setTaskError("");
+        try {
+            await deleteTask(user.id, tid);
+            setTasks(ts => ts.filter(t => t.id !== tid));
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to delete task.");
+        } finally {
+            setTaskBusy(false);
+        }
     };
 
-    const handleSaveEdit = () => {
+    const handleSaveEdit = async () => {
         if (!editTask) return;
-        setTasks(ts => ts.map(t => t.id === editTask.id ? { ...t, ...editTask } : t));
-        setEditTask(null);
+        setTaskBusy(true);
+        setTaskError("");
+        try {
+            const updated = await updateTask(user.id, editTask.id, {
+                title: editTask.title,
+                description: editTask.description,
+                priority: editTask.priority,
+                dueDate: editTask.dueDate,
+                assigneeId: editTask.assigneeId,
+                status: editTask.status,
+            });
+            setTasks(ts => ts.map(t => t.id === updated.id ? updated : t));
+            setEditTask(null);
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to update task.");
+        } finally {
+            setTaskBusy(false);
+        }
     };
 
     const byStatus = (status: Task["status"]) => visibleTasks.filter(t => t.status === status);
@@ -587,6 +659,8 @@ function TasksPage() {
                 )}
             </div>
 
+            {taskError && <div className="error-msg" style={{ marginBottom: 12 }}>{taskError}</div>}
+
             <div className="flex gap-12 mb-20">
                 <select className="form-select" style={{ maxWidth: 200 }} value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
                     <option value="all">All Groups</option>
@@ -611,7 +685,7 @@ function TasksPage() {
                                                 <button className="btn btn-ghost btn-sm" style={{ padding: "3px 7px" }} onClick={() => setEditTask({ ...task })}>
                                                     <Icon name="edit" size={11} />
                                                 </button>
-                                                <button className="btn btn-danger btn-sm" style={{ padding: "3px 7px" }} onClick={() => handleDeleteTask(task.id)}>
+                                                <button className="btn btn-danger btn-sm" style={{ padding: "3px 7px" }} onClick={() => void handleDeleteTask(task.id)} disabled={taskBusy}>
                                                     <Icon name="trash" size={11} />
                                                 </button>
                                             </>
@@ -681,9 +755,10 @@ function TasksPage() {
                                 <input className="form-input" type="date" value={newTask.dueDate} onChange={e => setNewTask({ ...newTask, dueDate: e.target.value })} />
                             </div>
                         </div>
+                        {taskError && <div className="error-msg" style={{ marginBottom: 10 }}>{taskError}</div>}
                         <div className="modal-actions">
                             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleCreateTask}>Create Task</button>
+                            <button className="btn btn-primary" onClick={() => void handleCreateTask()} disabled={taskBusy}>{taskBusy ? "Creating..." : "Create Task"}</button>
                         </div>
                     </div>
                 </div>
