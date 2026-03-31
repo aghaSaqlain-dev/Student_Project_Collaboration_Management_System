@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { fetchBootstrap, login } from "./api";
+import { adminCreateUser, adminDeleteUser, adminUpdateUser, fetchBootstrap, fetchUsers, login, register } from "./api";
 import type { Group, Role, Task, User } from "./types";
 
 interface AppContextType {
@@ -47,18 +47,38 @@ const Icon = ({ name, size = 16 }: { name: string; size?: number }) => {
     return icons[name] || null;
 };
 
-function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => Promise<void> }) {
+function LoginPage({
+    onLogin,
+    onRegister,
+}: {
+    onLogin: (email: string, password: string) => Promise<void>;
+    onRegister: (name: string, email: string, password: string) => Promise<void>;
+}) {
+    const [mode, setMode] = useState<"login" | "register">("login");
+    const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
 
-    const handleLogin = async () => {
+    const handleSubmit = async () => {
+        setError("");
+
+        if (mode === "register" && password !== confirmPassword) {
+            setError("Passwords do not match.");
+            return;
+        }
+
         setBusy(true);
         try {
-            await onLogin(email, password);
+            if (mode === "login") {
+                await onLogin(email, password);
+            } else {
+                await onRegister(name, email, password);
+            }
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Invalid email or password.");
+            setError(e instanceof Error ? e.message : "Authentication failed.");
         } finally {
             setBusy(false);
         }
@@ -69,6 +89,14 @@ function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => 
             <div className="login-card fade-in">
                 <h1>CollabSync</h1>
                 <p className="sub">Student Project Collaboration Platform</p>
+                <div className="tab-bar" style={{ marginBottom: 16 }}>
+                    <div className={`tab-item ${mode === "login" ? "active" : ""}`} onClick={() => { setMode("login"); setError(""); }}>
+                        Login
+                    </div>
+                    <div className={`tab-item ${mode === "register" ? "active" : ""}`} onClick={() => { setMode("register"); setError(""); }}>
+                        Register
+                    </div>
+                </div>
                 <div className="login-hint">
                     <strong>Demo Accounts:</strong><br />
                     Student: ali@uni.edu / student123<br />
@@ -76,16 +104,28 @@ function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => 
                     Admin: admin@uni.edu / admin123
                 </div>
                 {error && <div className="error-msg">{error}</div>}
+                {mode === "register" && (
+                    <div className="form-group">
+                        <label className="form-label">Full Name</label>
+                        <input className="form-input" value={name} onChange={e => { setName(e.target.value); setError(""); }} placeholder="Your name" />
+                    </div>
+                )}
                 <div className="form-group">
                     <label className="form-label">Email</label>
                     <input className="form-input" value={email} onChange={e => { setEmail(e.target.value); setError(""); }} placeholder="your@uni.edu" />
                 </div>
                 <div className="form-group">
                     <label className="form-label">Password</label>
-                    <input className="form-input" type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="••••••••" />
+                    <input className="form-input" type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="••••••••" />
                 </div>
-                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={handleLogin} disabled={busy}>
-                    {busy ? "Signing In..." : "Sign In"}
+                {mode === "register" && (
+                    <div className="form-group">
+                        <label className="form-label">Confirm Password</label>
+                        <input className="form-input" type="password" value={confirmPassword} onChange={e => { setConfirmPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="••••••••" />
+                    </div>
+                )}
+                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={handleSubmit} disabled={busy}>
+                    {busy ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
                 </button>
             </div>
         </div>
@@ -620,8 +660,32 @@ function UsersPage() {
     const { user, users, setUsers } = useApp();
     const [showCreate, setShowCreate] = useState(false);
     const [editUser, setEditUser] = useState<User | null>(null);
-    const [newUser, setNewUser] = useState({ name: "", email: "", role: "student" });
+    const [newUser, setNewUser] = useState({ name: "", email: "", password: "", role: "student" });
+    const [editPassword, setEditPassword] = useState("");
     const [search, setSearch] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        const loadUsers = async () => {
+            if (user.role !== "admin") {
+                return;
+            }
+
+            setBusy(true);
+            setError("");
+            try {
+                const latestUsers = await fetchUsers(user.id);
+                setUsers(latestUsers);
+            } catch (e) {
+                setError(e instanceof Error ? e.message : "Failed to load users.");
+            } finally {
+                setBusy(false);
+            }
+        };
+
+        void loadUsers();
+    }, [setUsers, user.id, user.role]);
 
     if (!can(user.role, "manage_users")) {
         return <div className="empty"><Icon name="shield" size={32} /><br />Access Denied. Admin only.</div>;
@@ -632,29 +696,64 @@ function UsersPage() {
         u.email.toLowerCase().includes(search.toLowerCase())
     );
 
-    const handleCreate = () => {
-        if (!newUser.name || !newUser.email) return;
-        const u: User = {
-            id: Date.now(),
-            name: newUser.name,
-            email: newUser.email,
-            role: newUser.role as Role,
-            avatar: newUser.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase(),
-        };
-        setUsers(us => [...us, u]);
-        setShowCreate(false);
-        setNewUser({ name: "", email: "", role: "student" });
+    const handleCreate = async () => {
+        if (!newUser.name || !newUser.email || !newUser.password) {
+            setError("Name, email, and password are required.");
+            return;
+        }
+
+        setBusy(true);
+        setError("");
+        try {
+            const created = await adminCreateUser(user.id, {
+                name: newUser.name,
+                email: newUser.email,
+                password: newUser.password,
+                role: newUser.role as Role,
+            });
+            setUsers((us) => [...us, created]);
+            setShowCreate(false);
+            setNewUser({ name: "", email: "", password: "", role: "student" });
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to create user.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleDelete = (uid: number) => {
-        if (uid === user.id) return alert("Cannot delete yourself.");
-        setUsers(us => us.filter(u => u.id !== uid));
+    const handleDelete = async (uid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            await adminDeleteUser(user.id, uid);
+            setUsers(us => us.filter(u => u.id !== uid));
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to delete user.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleSaveEdit = () => {
+    const handleSaveEdit = async () => {
         if (!editUser) return;
-        setUsers(us => us.map(u => u.id === editUser.id ? { ...u, ...editUser } : u));
-        setEditUser(null);
+
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await adminUpdateUser(user.id, editUser.id, {
+                name: editUser.name,
+                email: editUser.email,
+                role: editUser.role,
+                ...(editPassword.trim() ? { password: editPassword } : {}),
+            });
+            setUsers(us => us.map(u => u.id === updated.id ? updated : u));
+            setEditUser(null);
+            setEditPassword("");
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to update user.");
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
@@ -672,6 +771,8 @@ function UsersPage() {
             <div className="search-bar">
                 <input className="search-input" placeholder="Search users..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
+
+            {error && <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>}
 
             <div className="card">
                 <div className="table-wrap">
@@ -700,7 +801,7 @@ function UsersPage() {
                                             <button className="btn btn-ghost btn-sm" onClick={() => setEditUser({ ...u })}>
                                                 <Icon name="edit" size={12} /> Edit
                                             </button>
-                                            <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u.id)}>
+                                            <button className="btn btn-danger btn-sm" onClick={() => void handleDelete(u.id)} disabled={busy}>
                                                 <Icon name="trash" size={12} /> Delete
                                             </button>
                                         </div>
@@ -725,6 +826,10 @@ function UsersPage() {
                             <input className="form-input" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="email@uni.edu" />
                         </div>
                         <div className="form-group">
+                            <label className="form-label">Password</label>
+                            <input className="form-input" type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="Minimum 6 characters" />
+                        </div>
+                        <div className="form-group">
                             <label className="form-label">Role</label>
                             <select className="form-select" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                                 <option value="student">Student</option>
@@ -734,7 +839,7 @@ function UsersPage() {
                         </div>
                         <div className="modal-actions">
                             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleCreate}>Add User</button>
+                            <button className="btn btn-primary" onClick={() => void handleCreate()} disabled={busy}>Add User</button>
                         </div>
                     </div>
                 </div>
@@ -760,13 +865,19 @@ function UsersPage() {
                                 <option value="admin">Admin</option>
                             </select>
                         </div>
+                        <div className="form-group">
+                            <label className="form-label">New Password (optional)</label>
+                            <input className="form-input" type="password" value={editPassword} onChange={e => setEditPassword(e.target.value)} placeholder="Leave empty to keep current" />
+                        </div>
                         <div className="modal-actions">
-                            <button className="btn btn-ghost" onClick={() => setEditUser(null)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleSaveEdit}>Save Changes</button>
+                            <button className="btn btn-ghost" onClick={() => { setEditUser(null); setEditPassword(""); }}>Cancel</button>
+                            <button className="btn btn-primary" onClick={() => void handleSaveEdit()} disabled={busy}>Save Changes</button>
                         </div>
                     </div>
                 </div>
             )}
+
+            {busy && <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>Processing user request...</div>}
         </div>
     );
 }
@@ -799,7 +910,22 @@ export default function App() {
 
     const handleLogin = async (email: string, password: string) => {
         const user = await login(email, password);
+        if (user.role === "admin") {
+            const latestUsers = await fetchUsers(user.id);
+            setUsers(latestUsers);
+        }
         setCurrentUser(user);
+        setActiveTab("dashboard");
+    };
+
+    const handleRegister = async (name: string, email: string, password: string) => {
+        const user = await register(name, email, password);
+        setUsers((prev) => {
+            const exists = prev.some((candidate) => candidate.id === user.id);
+            return exists ? prev : [...prev, user];
+        });
+        setCurrentUser(user);
+        setActiveTab("dashboard");
     };
 
     if (loading) {
@@ -825,7 +951,7 @@ export default function App() {
         );
     }
 
-    if (!currentUser) return <LoginPage onLogin={handleLogin} />;
+    if (!currentUser) return <LoginPage onLogin={handleLogin} onRegister={handleRegister} />;
 
     const pages: Record<string, JSX.Element> = {
         dashboard: <Dashboard />,
