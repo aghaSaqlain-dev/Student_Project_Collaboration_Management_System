@@ -14,8 +14,8 @@
         "student-collab-modular": "file:.."
     },
     "devDependencies": {
-        "@types/cors": "^2.8.17",
-        "@types/express": "^4.17.21",
+        "@types/cors": "^2.8.19",
+        "@types/express": "^4.17.25",
         "tsx": "^4.19.2",
         "typescript": "^5.6.3"
     }
