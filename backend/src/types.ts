@@ -41,3 +41,33 @@ export interface Task {
     createdBy: number;
     dueDate: string;
 }
+
+// FR-6: Progress Submission
+export interface ProgressReport {
+    id: number;
+    groupId: number;
+    submittedBy: number;
+    title: string;
+    content: string;
+    type: "weekly" | "monthly";
+    submittedAt: string;
+    supervisorFeedback?: string;
+    reviewedBy?: number;
+}
+
+// FR-7: Evaluation & Feedback
+export interface Evaluation {
+    id: number;
+    groupId: number;
+    supervisorId: number;
+    score: number;
+    feedback: string;
+    evaluatedAt: string;
+}
+
+// FR-8: Admin Controls
+export interface SystemSettings {
+    maxTeamSize: number;
+    submissionDeadline: string;
+    registrationDeadline: string;
+}
