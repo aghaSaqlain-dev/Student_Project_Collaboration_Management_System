@@ -1,4 +1,4 @@
-import type { BootstrapResponse, Group, Task, User } from "./types";
+import type { BootstrapResponse, Group, Task, User, WorkLog } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
@@ -176,4 +176,32 @@ export async function deleteTask(actorId: number, taskId: number): Promise<void>
         method: "DELETE",
         headers: { "x-user-id": String(actorId) },
     });
+}
+
+export async function submitWorkLog(
+    actorId: number,
+    payload: { groupId: number; title: string; details: string; hours: number; date: string },
+): Promise<WorkLog> {
+    const result = await request<{ workLog: WorkLog }>("/work-logs", {
+        method: "POST",
+        headers: { "x-user-id": String(actorId) },
+        body: JSON.stringify(payload),
+    });
+
+    return result.workLog;
+}
+
+export async function fetchGroupWorkLogs(groupId: number, verifiedOnly = false): Promise<WorkLog[]> {
+    const query = verifiedOnly ? "?verified=true" : "";
+    const result = await request<{ workLogs: WorkLog[] }>(`/groups/${groupId}/work-logs${query}`);
+    return result.workLogs;
+}
+
+export async function approveWorkLog(actorId: number, workLogId: number): Promise<WorkLog> {
+    const result = await request<{ workLog: WorkLog }>(`/work-logs/${workLogId}/approve`, {
+        method: "POST",
+        headers: { "x-user-id": String(actorId) },
+    });
+
+    return result.workLog;
 }

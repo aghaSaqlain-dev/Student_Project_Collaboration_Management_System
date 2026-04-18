@@ -1,4 +1,4 @@
-import type { Evaluation, Group, ProgressReport, PublicUser, SystemSettings, Task, User } from "./types.js";
+import type { Evaluation, Group, ProgressReport, PublicUser, SystemSettings, Task, User, WorkLog } from "./types.js";
 
 export const users: User[] = [
     { id: 1, name: "Ali Hassan", email: "ali@uni.edu", password: "student123", role: "student", avatar: "AH" },
@@ -43,6 +43,7 @@ export const tasks: Task[] = [
 
 export const progressReports: ProgressReport[] = [];
 export const evaluations: Evaluation[] = [];
+export const workLogs: WorkLog[] = [];
 export let systemSettings: SystemSettings = {
     maxTeamSize: 5,
     submissionDeadline: "2025-06-30",

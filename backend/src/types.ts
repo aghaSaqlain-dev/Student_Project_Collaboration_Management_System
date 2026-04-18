@@ -42,6 +42,23 @@ export interface Task {
     dueDate: string;
 }
 
+export type WorkLogStatus = "pending" | "verified";
+
+// FR-5: Work Log Verification
+export interface WorkLog {
+    id: number;
+    groupId: number;
+    submittedBy: number;
+    title: string;
+    details: string;
+    hours: number;
+    date: string;
+    submittedAt: string;
+    approvedBy: number[];
+    status: WorkLogStatus;
+    verifiedAt?: string;
+}
+
 // FR-6: Progress Submission
 export interface ProgressReport {
     id: number;

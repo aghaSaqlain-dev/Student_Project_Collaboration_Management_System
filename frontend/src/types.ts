@@ -33,6 +33,22 @@ export interface Task {
     dueDate: string;
 }
 
+export type WorkLogStatus = "pending" | "verified";
+
+export interface WorkLog {
+    id: number;
+    groupId: number;
+    submittedBy: number;
+    title: string;
+    details: string;
+    hours: number;
+    date: string;
+    submittedAt: string;
+    approvedBy: number[];
+    status: WorkLogStatus;
+    verifiedAt?: string;
+}
+
 export interface BootstrapResponse {
     users: User[];
     groups: Group[];
