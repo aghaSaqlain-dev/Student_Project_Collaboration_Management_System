@@ -1,4 +1,4 @@
-import type { Group, PublicUser, Task, User } from "./types.js";
+import type { Evaluation, Group, ProgressReport, PublicUser, SystemSettings, Task, User } from "./types.js";
 
 export const users: User[] = [
     { id: 1, name: "Ali Hassan", email: "ali@uni.edu", password: "student123", role: "student", avatar: "AH" },
@@ -40,6 +40,14 @@ export const tasks: Task[] = [
     { id: 4, groupId: 2, title: "Smart Contract Design", description: "Write Solidity contracts", assigneeId: 3, status: "in-progress", priority: "high", createdBy: 3, dueDate: "2025-04-25" },
     { id: 5, groupId: 3, title: "Wireframe Design", description: "Create Figma mockups", assigneeId: 4, status: "todo", priority: "medium", createdBy: 4, dueDate: "2025-04-18" },
 ];
+
+export const progressReports: ProgressReport[] = [];
+export const evaluations: Evaluation[] = [];
+export let systemSettings: SystemSettings = {
+    maxTeamSize: 5,
+    submissionDeadline: "2025-06-30",
+    registrationDeadline: "2025-05-01",
+};
 
 export function withoutPassword(user: User): PublicUser {
     const { password, ...rest } = user;
