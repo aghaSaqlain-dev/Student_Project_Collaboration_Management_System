@@ -1,5 +1,22 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { fetchBootstrap, login } from "./api";
+import {
+    adminCreateUser,
+    adminDeleteUser,
+    adminUpdateUser,
+    completeGroup,
+    createTask,
+    deleteTask,
+    fetchBootstrap,
+    fetchGroups,
+    fetchUsers,
+    leaderApproveJoinRequest,
+    leaderRejectJoinRequest,
+    login,
+    register,
+    requestJoinGroup,
+    supervisorApproveGroup,
+    updateTask,
+} from "./api";
 import type { Group, Role, Task, User } from "./types";
 
 interface AppContextType {
@@ -47,18 +64,38 @@ const Icon = ({ name, size = 16 }: { name: string; size?: number }) => {
     return icons[name] || null;
 };
 
-function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => Promise<void> }) {
+function LoginPage({
+    onLogin,
+    onRegister,
+}: {
+    onLogin: (email: string, password: string) => Promise<void>;
+    onRegister: (name: string, email: string, password: string) => Promise<void>;
+}) {
+    const [mode, setMode] = useState<"login" | "register">("login");
+    const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
 
-    const handleLogin = async () => {
+    const handleSubmit = async () => {
+        setError("");
+
+        if (mode === "register" && password !== confirmPassword) {
+            setError("Passwords do not match.");
+            return;
+        }
+
         setBusy(true);
         try {
-            await onLogin(email, password);
+            if (mode === "login") {
+                await onLogin(email, password);
+            } else {
+                await onRegister(name, email, password);
+            }
         } catch (e) {
-            setError(e instanceof Error ? e.message : "Invalid email or password.");
+            setError(e instanceof Error ? e.message : "Authentication failed.");
         } finally {
             setBusy(false);
         }
@@ -69,6 +106,14 @@ function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => 
             <div className="login-card fade-in">
                 <h1>CollabSync</h1>
                 <p className="sub">Student Project Collaboration Platform</p>
+                <div className="tab-bar" style={{ marginBottom: 16 }}>
+                    <div className={`tab-item ${mode === "login" ? "active" : ""}`} onClick={() => { setMode("login"); setError(""); }}>
+                        Login
+                    </div>
+                    <div className={`tab-item ${mode === "register" ? "active" : ""}`} onClick={() => { setMode("register"); setError(""); }}>
+                        Register
+                    </div>
+                </div>
                 <div className="login-hint">
                     <strong>Demo Accounts:</strong><br />
                     Student: ali@uni.edu / student123<br />
@@ -76,16 +121,28 @@ function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => 
                     Admin: admin@uni.edu / admin123
                 </div>
                 {error && <div className="error-msg">{error}</div>}
+                {mode === "register" && (
+                    <div className="form-group">
+                        <label className="form-label">Full Name</label>
+                        <input className="form-input" value={name} onChange={e => { setName(e.target.value); setError(""); }} placeholder="Your name" />
+                    </div>
+                )}
                 <div className="form-group">
                     <label className="form-label">Email</label>
                     <input className="form-input" value={email} onChange={e => { setEmail(e.target.value); setError(""); }} placeholder="your@uni.edu" />
                 </div>
                 <div className="form-group">
                     <label className="form-label">Password</label>
-                    <input className="form-input" type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="••••••••" />
+                    <input className="form-input" type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="••••••••" />
                 </div>
-                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={handleLogin} disabled={busy}>
-                    {busy ? "Signing In..." : "Sign In"}
+                {mode === "register" && (
+                    <div className="form-group">
+                        <label className="form-label">Confirm Password</label>
+                        <input className="form-input" type="password" value={confirmPassword} onChange={e => { setConfirmPassword(e.target.value); setError(""); }} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="••••••••" />
+                    </div>
+                )}
+                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={handleSubmit} disabled={busy}>
+                    {busy ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
                 </button>
             </div>
         </div>
@@ -219,6 +276,21 @@ function GroupsPage() {
     const [tab, setTab] = useState("all");
     const [showCreate, setShowCreate] = useState(false);
     const [newGroup, setNewGroup] = useState({ name: "", description: "", tags: "", maxSize: 4 });
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        const loadGroups = async () => {
+            try {
+                const latestGroups = await fetchGroups(search);
+                setGroups(latestGroups);
+            } catch (e) {
+                setError(e instanceof Error ? e.message : "Failed to load groups.");
+            }
+        };
+
+        void loadGroups();
+    }, [search, setGroups]);
 
     const filtered = groups.filter(g => {
         const matchSearch = g.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -232,24 +304,73 @@ function GroupsPage() {
 
     const getUserName = (id: number) => users.find(u => u.id === id)?.name || "Unknown";
 
-    const handleJoin = (gid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid ? { ...g, pendingRequests: [...(g.pendingRequests || []), user.id] } : g));
+    const replaceGroup = (updatedGroup: Group) => {
+        setGroups((current) => current.map((group) => (group.id === updatedGroup.id ? updatedGroup : group)));
     };
 
-    const handleApproveRequest = (gid: number, uid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid
-            ? { ...g, members: [...g.members, uid], pendingRequests: g.pendingRequests.filter(r => r !== uid) }
-            : g));
+    const handleJoin = async (gid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await requestJoinGroup(user.id, gid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to request group join.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleRejectRequest = (gid: number, uid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid
-            ? { ...g, pendingRequests: g.pendingRequests.filter(r => r !== uid) }
-            : g));
+    const handleApproveRequest = async (gid: number, uid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await leaderApproveJoinRequest(user.id, gid, uid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to approve join request.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleApproveGroup = (gid: number) => {
-        setGroups(gs => gs.map(g => g.id === gid ? { ...g, status: "active" } : g));
+    const handleRejectRequest = async (gid: number, uid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await leaderRejectJoinRequest(user.id, gid, uid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to reject join request.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleApproveGroup = async (gid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await supervisorApproveGroup(user.id, gid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to approve team.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleCompleteGroup = async (gid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await completeGroup(user.id, gid);
+            replaceGroup(updated);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to mark group as completed.");
+        } finally {
+            setBusy(false);
+        }
     };
 
     const handleCreateGroup = () => {
@@ -297,6 +418,8 @@ function GroupsPage() {
                 <input className="search-input" placeholder="Search groups by name or tech..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
 
+            {error && <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>}
+
             <div className="card-grid card-grid-2">
                 {filtered.map(g => {
                     const isMember = g.members.includes(user.id) || g.leaderId === user.id;
@@ -336,7 +459,7 @@ function GroupsPage() {
                                             <span style={{ fontSize: 12 }}>{getUserName(rid)}</span>
                                             <div className="flex gap-8">
                                                 <button className="btn btn-success btn-sm" onClick={() => handleApproveRequest(g.id, rid)}><Icon name="check" size={11} /></button>
-                                                <button className="btn btn-danger btn-sm" onClick={() => handleRejectRequest(g.id, rid)}><Icon name="x" size={11} /></button>
+                                                <button className="btn btn-danger btn-sm" onClick={() => void handleRejectRequest(g.id, rid)}><Icon name="x" size={11} /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -344,24 +467,41 @@ function GroupsPage() {
                             )}
 
                             {user.role === "supervisor" && g.status === "formed" && (
-                                <button className="btn btn-success w-full" style={{ justifyContent: "center" }} onClick={() => handleApproveGroup(g.id)}>
+                                <button className="btn btn-success w-full" style={{ justifyContent: "center" }} onClick={() => void handleApproveGroup(g.id)} disabled={busy}>
                                     <Icon name="check" size={13} /> Approve Group
                                 </button>
                             )}
 
+                            {g.status === "active" && (user.role === "supervisor" || g.leaderId === user.id) && (
+                                <button className="btn btn-ghost w-full" style={{ justifyContent: "center", marginTop: 6, borderColor: "rgba(0,229,160,0.3)", color: "var(--accent3)" }} onClick={() => void handleCompleteGroup(g.id)} disabled={busy}>
+                                    <Icon name="check" size={13} /> Mark as Completed
+                                </button>
+                            )}
+
+                            {g.status === "completed" && (
+                                <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0", borderTop: "1px solid var(--border)", marginTop: 8 }}>
+                                    ✅ Project completed — no further changes allowed
+                                </div>
+                            )}
+
                             {user.role === "student" && !isMember && !hasPending && g.status === "open" && !isFull && (
-                                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={() => handleJoin(g.id)}>
+                                <button className="btn btn-primary w-full" style={{ justifyContent: "center" }} onClick={() => void handleJoin(g.id)} disabled={busy}>
                                     Request to Join
                                 </button>
                             )}
                             {user.role === "student" && hasPending && (
                                 <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>Request pending...</div>
                             )}
-                            {user.role === "student" && isMember && (
+                            {user.role === "student" && isMember && g.status !== "completed" && (
                                 <div style={{ textAlign: "center", fontSize: 12, color: "var(--accent3)", padding: "8px 0" }}>You are a member</div>
                             )}
-                            {isFull && !isMember && (
+                            {isFull && !isMember && g.status === "open" && (
                                 <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>Group is full</div>
+                            )}
+                            {!isMember && !hasPending && g.status !== "open" && g.status !== "completed" && user.role === "student" && (
+                                <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted)", padding: "8px 0" }}>
+                                    🔒 {g.status === "formed" ? "Awaiting supervisor approval" : "Group is active"}
+                                </div>
                             )}
                         </div>
                     );
@@ -371,6 +511,8 @@ function GroupsPage() {
             {filtered.length === 0 && (
                 <div className="empty">No groups found</div>
             )}
+
+            {busy && <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>Processing group request...</div>}
 
             {showCreate && (
                 <div className="modal-overlay">
@@ -410,6 +552,8 @@ function TasksPage() {
     const [filterGroup, setFilterGroup] = useState("all");
     const [newTask, setNewTask] = useState({ title: "", description: "", assigneeId: "", groupId: "", priority: "medium", dueDate: "" });
     const [editTask, setEditTask] = useState<Task | null>(null);
+    const [taskBusy, setTaskBusy] = useState(false);
+    const [taskError, setTaskError] = useState("");
 
     const myGroupIds = groups.filter(g => g.members.includes(user.id) || g.leaderId === user.id).map(g => g.id);
     const visibleGroupIds = user.role === "student" ? myGroupIds : groups.map(g => g.id);
@@ -423,37 +567,73 @@ function TasksPage() {
         return g?.leaderId === user.id;
     };
 
-    const handleCreateTask = () => {
+    const handleCreateTask = async () => {
         if (!newTask.title || !newTask.groupId) return;
-        const assignee = parseInt(newTask.assigneeId, 10);
-        const t: Task = {
-            id: Date.now(),
-            title: newTask.title,
-            description: newTask.description,
-            assigneeId: Number.isNaN(assignee) ? user.id : assignee,
-            groupId: parseInt(newTask.groupId, 10),
-            status: "todo",
-            priority: newTask.priority as Task["priority"],
-            createdBy: user.id,
-            dueDate: newTask.dueDate,
-        };
-        setTasks(ts => [...ts, t]);
-        setShowCreate(false);
-        setNewTask({ title: "", description: "", assigneeId: "", groupId: "", priority: "medium", dueDate: "" });
+        setTaskBusy(true);
+        setTaskError("");
+        try {
+            const assignee = parseInt(newTask.assigneeId, 10);
+            const created = await createTask(user.id, {
+                title: newTask.title,
+                description: newTask.description,
+                groupId: parseInt(newTask.groupId, 10),
+                assigneeId: Number.isNaN(assignee) ? user.id : assignee,
+                priority: newTask.priority,
+                dueDate: newTask.dueDate,
+            });
+            setTasks(ts => [...ts, created]);
+            setShowCreate(false);
+            setNewTask({ title: "", description: "", assigneeId: "", groupId: "", priority: "medium", dueDate: "" });
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to create task.");
+        } finally {
+            setTaskBusy(false);
+        }
     };
 
-    const handleStatusChange = (tid: number, status: Task["status"]) => {
-        setTasks(ts => ts.map(t => t.id === tid ? { ...t, status } : t));
+    const handleStatusChange = async (tid: number, status: Task["status"]) => {
+        setTaskError("");
+        try {
+            const updated = await updateTask(user.id, tid, { status });
+            setTasks(ts => ts.map(t => t.id === tid ? updated : t));
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to update task status.");
+        }
     };
 
-    const handleDeleteTask = (tid: number) => {
-        setTasks(ts => ts.filter(t => t.id !== tid));
+    const handleDeleteTask = async (tid: number) => {
+        setTaskBusy(true);
+        setTaskError("");
+        try {
+            await deleteTask(user.id, tid);
+            setTasks(ts => ts.filter(t => t.id !== tid));
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to delete task.");
+        } finally {
+            setTaskBusy(false);
+        }
     };
 
-    const handleSaveEdit = () => {
+    const handleSaveEdit = async () => {
         if (!editTask) return;
-        setTasks(ts => ts.map(t => t.id === editTask.id ? { ...t, ...editTask } : t));
-        setEditTask(null);
+        setTaskBusy(true);
+        setTaskError("");
+        try {
+            const updated = await updateTask(user.id, editTask.id, {
+                title: editTask.title,
+                description: editTask.description,
+                priority: editTask.priority,
+                dueDate: editTask.dueDate,
+                assigneeId: editTask.assigneeId,
+                status: editTask.status,
+            });
+            setTasks(ts => ts.map(t => t.id === updated.id ? updated : t));
+            setEditTask(null);
+        } catch (e) {
+            setTaskError(e instanceof Error ? e.message : "Failed to update task.");
+        } finally {
+            setTaskBusy(false);
+        }
     };
 
     const byStatus = (status: Task["status"]) => visibleTasks.filter(t => t.status === status);
@@ -479,6 +659,8 @@ function TasksPage() {
                 )}
             </div>
 
+            {taskError && <div className="error-msg" style={{ marginBottom: 12 }}>{taskError}</div>}
+
             <div className="flex gap-12 mb-20">
                 <select className="form-select" style={{ maxWidth: 200 }} value={filterGroup} onChange={e => setFilterGroup(e.target.value)}>
                     <option value="all">All Groups</option>
@@ -503,7 +685,7 @@ function TasksPage() {
                                                 <button className="btn btn-ghost btn-sm" style={{ padding: "3px 7px" }} onClick={() => setEditTask({ ...task })}>
                                                     <Icon name="edit" size={11} />
                                                 </button>
-                                                <button className="btn btn-danger btn-sm" style={{ padding: "3px 7px" }} onClick={() => handleDeleteTask(task.id)}>
+                                                <button className="btn btn-danger btn-sm" style={{ padding: "3px 7px" }} onClick={() => void handleDeleteTask(task.id)} disabled={taskBusy}>
                                                     <Icon name="trash" size={11} />
                                                 </button>
                                             </>
@@ -573,9 +755,10 @@ function TasksPage() {
                                 <input className="form-input" type="date" value={newTask.dueDate} onChange={e => setNewTask({ ...newTask, dueDate: e.target.value })} />
                             </div>
                         </div>
+                        {taskError && <div className="error-msg" style={{ marginBottom: 10 }}>{taskError}</div>}
                         <div className="modal-actions">
                             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleCreateTask}>Create Task</button>
+                            <button className="btn btn-primary" onClick={() => void handleCreateTask()} disabled={taskBusy}>{taskBusy ? "Creating..." : "Create Task"}</button>
                         </div>
                     </div>
                 </div>
@@ -620,8 +803,32 @@ function UsersPage() {
     const { user, users, setUsers } = useApp();
     const [showCreate, setShowCreate] = useState(false);
     const [editUser, setEditUser] = useState<User | null>(null);
-    const [newUser, setNewUser] = useState({ name: "", email: "", role: "student" });
+    const [newUser, setNewUser] = useState({ name: "", email: "", password: "", role: "student" });
+    const [editPassword, setEditPassword] = useState("");
     const [search, setSearch] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        const loadUsers = async () => {
+            if (user.role !== "admin") {
+                return;
+            }
+
+            setBusy(true);
+            setError("");
+            try {
+                const latestUsers = await fetchUsers(user.id);
+                setUsers(latestUsers);
+            } catch (e) {
+                setError(e instanceof Error ? e.message : "Failed to load users.");
+            } finally {
+                setBusy(false);
+            }
+        };
+
+        void loadUsers();
+    }, [setUsers, user.id, user.role]);
 
     if (!can(user.role, "manage_users")) {
         return <div className="empty"><Icon name="shield" size={32} /><br />Access Denied. Admin only.</div>;
@@ -632,29 +839,64 @@ function UsersPage() {
         u.email.toLowerCase().includes(search.toLowerCase())
     );
 
-    const handleCreate = () => {
-        if (!newUser.name || !newUser.email) return;
-        const u: User = {
-            id: Date.now(),
-            name: newUser.name,
-            email: newUser.email,
-            role: newUser.role as Role,
-            avatar: newUser.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase(),
-        };
-        setUsers(us => [...us, u]);
-        setShowCreate(false);
-        setNewUser({ name: "", email: "", role: "student" });
+    const handleCreate = async () => {
+        if (!newUser.name || !newUser.email || !newUser.password) {
+            setError("Name, email, and password are required.");
+            return;
+        }
+
+        setBusy(true);
+        setError("");
+        try {
+            const created = await adminCreateUser(user.id, {
+                name: newUser.name,
+                email: newUser.email,
+                password: newUser.password,
+                role: newUser.role as Role,
+            });
+            setUsers((us) => [...us, created]);
+            setShowCreate(false);
+            setNewUser({ name: "", email: "", password: "", role: "student" });
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to create user.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleDelete = (uid: number) => {
-        if (uid === user.id) return alert("Cannot delete yourself.");
-        setUsers(us => us.filter(u => u.id !== uid));
+    const handleDelete = async (uid: number) => {
+        setBusy(true);
+        setError("");
+        try {
+            await adminDeleteUser(user.id, uid);
+            setUsers(us => us.filter(u => u.id !== uid));
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to delete user.");
+        } finally {
+            setBusy(false);
+        }
     };
 
-    const handleSaveEdit = () => {
+    const handleSaveEdit = async () => {
         if (!editUser) return;
-        setUsers(us => us.map(u => u.id === editUser.id ? { ...u, ...editUser } : u));
-        setEditUser(null);
+
+        setBusy(true);
+        setError("");
+        try {
+            const updated = await adminUpdateUser(user.id, editUser.id, {
+                name: editUser.name,
+                email: editUser.email,
+                role: editUser.role,
+                ...(editPassword.trim() ? { password: editPassword } : {}),
+            });
+            setUsers(us => us.map(u => u.id === updated.id ? updated : u));
+            setEditUser(null);
+            setEditPassword("");
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to update user.");
+        } finally {
+            setBusy(false);
+        }
     };
 
     return (
@@ -672,6 +914,8 @@ function UsersPage() {
             <div className="search-bar">
                 <input className="search-input" placeholder="Search users..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
+
+            {error && <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>}
 
             <div className="card">
                 <div className="table-wrap">
@@ -700,7 +944,7 @@ function UsersPage() {
                                             <button className="btn btn-ghost btn-sm" onClick={() => setEditUser({ ...u })}>
                                                 <Icon name="edit" size={12} /> Edit
                                             </button>
-                                            <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u.id)}>
+                                            <button className="btn btn-danger btn-sm" onClick={() => void handleDelete(u.id)} disabled={busy}>
                                                 <Icon name="trash" size={12} /> Delete
                                             </button>
                                         </div>
@@ -725,6 +969,10 @@ function UsersPage() {
                             <input className="form-input" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="email@uni.edu" />
                         </div>
                         <div className="form-group">
+                            <label className="form-label">Password</label>
+                            <input className="form-input" type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="Minimum 6 characters" />
+                        </div>
+                        <div className="form-group">
                             <label className="form-label">Role</label>
                             <select className="form-select" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
                                 <option value="student">Student</option>
@@ -734,7 +982,7 @@ function UsersPage() {
                         </div>
                         <div className="modal-actions">
                             <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleCreate}>Add User</button>
+                            <button className="btn btn-primary" onClick={() => void handleCreate()} disabled={busy}>Add User</button>
                         </div>
                     </div>
                 </div>
@@ -760,13 +1008,19 @@ function UsersPage() {
                                 <option value="admin">Admin</option>
                             </select>
                         </div>
+                        <div className="form-group">
+                            <label className="form-label">New Password (optional)</label>
+                            <input className="form-input" type="password" value={editPassword} onChange={e => setEditPassword(e.target.value)} placeholder="Leave empty to keep current" />
+                        </div>
                         <div className="modal-actions">
-                            <button className="btn btn-ghost" onClick={() => setEditUser(null)}>Cancel</button>
-                            <button className="btn btn-primary" onClick={handleSaveEdit}>Save Changes</button>
+                            <button className="btn btn-ghost" onClick={() => { setEditUser(null); setEditPassword(""); }}>Cancel</button>
+                            <button className="btn btn-primary" onClick={() => void handleSaveEdit()} disabled={busy}>Save Changes</button>
                         </div>
                     </div>
                 </div>
             )}
+
+            {busy && <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>Processing user request...</div>}
         </div>
     );
 }
@@ -799,7 +1053,22 @@ export default function App() {
 
     const handleLogin = async (email: string, password: string) => {
         const user = await login(email, password);
+        if (user.role === "admin") {
+            const latestUsers = await fetchUsers(user.id);
+            setUsers(latestUsers);
+        }
         setCurrentUser(user);
+        setActiveTab("dashboard");
+    };
+
+    const handleRegister = async (name: string, email: string, password: string) => {
+        const user = await register(name, email, password);
+        setUsers((prev) => {
+            const exists = prev.some((candidate) => candidate.id === user.id);
+            return exists ? prev : [...prev, user];
+        });
+        setCurrentUser(user);
+        setActiveTab("dashboard");
     };
 
     if (loading) {
@@ -825,7 +1094,7 @@ export default function App() {
         );
     }
 
-    if (!currentUser) return <LoginPage onLogin={handleLogin} />;
+    if (!currentUser) return <LoginPage onLogin={handleLogin} onRegister={handleRegister} />;
 
     const pages: Record<string, JSX.Element> = {
         dashboard: <Dashboard />,
